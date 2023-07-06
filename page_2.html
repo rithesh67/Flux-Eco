@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Flux Eco</title>
+    <style>
+      #map {
+        height: 100vh;
+        width: 500px;
+        margin: 0 auto;
+        border-radius: 20px;
+        float: left;
+      }
+      .form-container {
+        text-align: center;
+      }
+      .form-container label {
+        display: block;
+        margin-bottom: 5px;
+        margin-top: 15px;
+        font-size: 18px;
+        font-family: "Lucida Sans", "Lucida Sans Regular", "Lucida Grande",
+          "Lucida Sans Unicode", Geneva, Verdana, sans-serif;
+        color: azure;
+      }
+      .form-container input[type="text"] {
+        width: 30%;
+        margin-bottom: 10px;
+        padding: 5px;
+        font-size: 14px;
+        border-radius: 15px;
+      }
+      .form-container button {
+        display: block;
+        width: 10%;
+        padding: 10px;
+        font-size: 14px;
+        margin-left: 950px;
+        background-color: #b54204;
+        color: #fff;
+        outline: 2px solid #b54204;
+        outline-offset: 4px;
+        border-radius: 30px;
+        margin-top: 30px;
+      }
+    </style>
+    <script>
+      let map;
+      let directionsService;
+      let directionsRenderer;
+      const geojsonMarkers = [];
+      const bufferRadius = 10;
+
+      function initMap() {
+        // Create a new map instance
+        map = new google.maps.Map(document.getElementById("map"), {
+          center: { lat: -31.9523, lng: 115.8613 },
+          zoom: 12,
+        });
+
+        // Create a DirectionsService object
+        directionsService = new google.maps.DirectionsService();
+
+        // Create a DirectionsRenderer object
+        directionsRenderer = new google.maps.DirectionsRenderer({
+          map: map,
+          polylineOptions: {
+            strokeColor: "blue",
+            strokeOpacity: 0.5,
+            strokeWeight: 8,
+            fillOpacity: 0.2,
+            fillColor: "blue",
+          },
+        });
+
+        // Load the GeoJSON file and create markers for the coordinates
+        loadGeoJSONAndCreateMarkers();
+
+        // Add a click event listener to calculate the markers within the route
+        document
+          .getElementById("calculate-route")
+          .addEventListener("click", calculateMarkersInRoute);
+      }
+
+      function loadGeoJSONAndCreateMarkers() {
+        // Load the GeoJSON file
+        map.data.loadGeoJson("Traffic_Signal_Sites.geojson");
+
+        // Wait for the GeoJSON data to load
+        map.data.addListener("addfeature", function (event) {
+          // Check if the added feature is a point
+          if (event.feature.getGeometry().getType() === "Point") {
+            const coordinate = event.feature.getGeometry().get();
+
+            // Create a marker for each coordinate with a buffer
+            const markerWithBuffer = addMarkerWithBuffer(
+              map,
+              coordinate,
+              bufferRadius
+            );
+
+            // Add the marker to the GeoJSON markers array
+            geojsonMarkers.push(markerWithBuffer);
+          }
+        });
+      }
+
+      function addMarkerWithBuffer(map, position, bufferRadius) {
+        // Create the marker
+        const marker = new google.maps.Marker({
+          position: position,
+          map: map,
+        });
+
+        // Create the circle overlay with the buffer
+        const buffer = new google.maps.Circle({
+          center: position,
+          radius: bufferRadius,
+          map: map,
+          fillColor: "blue",
+          fillOpacity: 0.2,
+          strokeColor: "blue",
+          strokeOpacity: 0.5,
+          strokeWeight: 2,
+        });
+
+        // Return the marker and buffer as a single object
+        return {
+          marker: marker,
+          buffer: buffer,
+        };
+      }
+
+      function calculateMarkersInRoute() {
+        // Get the origin and destination input values from the user
+        const origin = document.getElementById("origin").value;
+        const destination = document.getElementById("destination").value;
+
+        // Define the request object for the directions service
+        const request = {
+          origin: origin,
+          destination: destination,
+          travelMode: google.maps.TravelMode.DRIVING,
+        };
+
+        // Make a request to the directions service
+        directionsService.route(request, function (result, status) {
+          if (status === "OK") {
+            // Display the route on the map
+            directionsRenderer.setDirections(result);
+
+            const routePath = result.routes[0].overview_path;
+
+            // Count the number of GeoJSON markers within the route
+            let markerCount = 0;
+            const distances = [];
+            let previousMarkerPosition;
+
+            geojsonMarkers.forEach(function (markerWithBuffer) {
+              const marker = markerWithBuffer.marker;
+              const buffer = markerWithBuffer.buffer;
+
+              // Check if the marker position or buffer intersects with the main route
+              if (
+                isMarkerOnRoute(marker.getPosition(), routePath) ||
+                isCircleOnRoute(buffer, routePath)
+              ) {
+                markerCount++;
+
+                if (previousMarkerPosition) {
+                  // Calculate distance between the current and previous marker
+                  const distance = google.maps.geometry.spherical.computeDistanceBetween(
+                    previousMarkerPosition,
+                    marker.getPosition()
+                  );
+                  distances.push(distance / 1000); // Convert meters to kilometers
+                }
+
+                previousMarkerPosition = marker.getPosition();
+              }
+            });
+
+            // Display the marker count
+            alert("Number of markers in the route: " + markerCount);
+
+            if (distances.length > 0) {
+              // Display the individual distances
+              alert(
+                "Individual distances between markers: " +
+                  distances.join(" km, ") +
+                  " km"
+              );
+
+              // Calculate and display the total distance
+              const totalDistance = distances.reduce(
+                (accumulator, currentValue) => accumulator + currentValue,
+                0
+              );
+              alert("Total distance: " + totalDistance.toFixed(2) + " km");
+            }
+          }
+        });
+      }
+
+      function isMarkerOnRoute(position, routePath) {
+        return google.maps.geometry.poly.isLocationOnEdge(
+          position,
+          new google.maps.Polyline({ path: routePath }),
+          10e-5 // Tolerance value for checking intersection
+        );
+      }
+
+      function isCircleOnRoute(circle, routePath) {
+        const bounds = circle.getBounds();
+        const ne = bounds.getNorthEast();
+        const sw = bounds.getSouthWest();
+
+        // Check if any corner of the circle's bounds is on the route
+        return (
+          google.maps.geometry.poly.isLocationOnEdge(
+            ne,
+            new google.maps.Polyline({ path: routePath }),
+            10e-5
+          ) ||
+          google.maps.geometry.poly.isLocationOnEdge(
+            sw,
+            new google.maps.Polyline({ path: routePath }),
+            10e-5
+          )
+        );
+      }
+    </script>
+  </head>
+  <body>
+    <div id="map"></div>
+
+    <div class="form-container">
+      <label for="origin">Origin:</label>
+      <input type="text" id="origin" placeholder="Enter origin" />
+      <label for="destination">Destination:</label>
+      <input type="text" id="destination" placeholder="Enter destination" />
+      <button id="calculate-route">Start</button>
+    </div>
+    <style>
+      body {
+        background-image: url("treeblur.jpg");
+        background-size: cover;
+        background-position: center;
+        background-repeat: no-repeat;
+      }
+    </style>
+    <script
+      async
+      defer
+      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBzwjNe11Q_bnonrQVs8uj1xwjyoI73t4E&callback=initMap"
+    ></script>
+  </body>
+</html>
